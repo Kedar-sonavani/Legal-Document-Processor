@@ -17,11 +17,11 @@ def main():
     if not os.getenv("PYTHONPATH"):
         os.environ["PYTHONPATH"] = str(project_root)
     
-    # Configuration
-    host = os.getenv("API_HOST", "0.0.0.0")
-    port = int(os.getenv("API_PORT", "8000"))
-    reload = os.getenv("API_RELOAD", "true").lower() == "true"
-    log_level = os.getenv("API_LOG_LEVEL", "info")
+    # Configuration - support both PORT (Render) and API_PORT
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
+    reload = False  # Always false for production deployment
+    log_level = os.getenv("LOG_LEVEL", "info")
     
     print(f"Starting Contract Processing API...")
     print(f"Host: {host}")
@@ -29,6 +29,7 @@ def main():
     print(f"Reload: {reload}")
     print(f"Log Level: {log_level}")
     print(f"Project Root: {project_root}")
+    print(f"Environment: {'development' if reload else 'production'}")
     
     # Run the server
     uvicorn.run(
@@ -37,7 +38,8 @@ def main():
         port=port,
         reload=reload,
         log_level=log_level,
-        access_log=True
+        access_log=True,
+        workers=1 if reload else int(os.getenv("WORKERS", "1"))
     )
 
 if __name__ == "__main__":

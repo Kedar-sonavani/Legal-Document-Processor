@@ -6,7 +6,8 @@ import DocumentViewer from "./DocumentViewer";
 import ProcessingComponent from "./ProcessingComponent";
 import UploadComponent from "./UploadComponent";
 import RiskDashboard from "./RiskDashboard";
-import Checklist from "./Checklist"; // Import the new component
+import Checklist from "./Checklist";
+import apiService from "../services/api";
 
 const APP_STATE = {
   AWAITING_UPLOAD: "AWAITING_UPLOAD",
@@ -25,6 +26,8 @@ export default function ChatPage({ initialMode }) {
   const [activeTab, setActiveTab] = useState('document'); 
   const [riskAnalysisResults, setRiskAnalysisResults] = useState(null);
   const [isAnalyzingRisks, setIsAnalyzingRisks] = useState(false);
+  const [contractId, setContractId] = useState(null);
+  const [processingStatus, setProcessingStatus] = useState(null);
 
   // --- New states for Checklist ---
   const [checklistData, setChecklistData] = useState(null);
@@ -35,41 +38,93 @@ export default function ChatPage({ initialMode }) {
     if (!file) return;
     setAppState(APP_STATE.PROCESSING);
     setFileName(file.name);
-    // Reset all previous analysis when a new file is uploaded
     setRiskAnalysisResults(null);
     setChecklistData(null);
     setActiveTab('document');
 
-    // Simulate file upload and processing
-    setTimeout(() => {
-      const simulatedText = `This is the extracted text from "${file.name}".`;
-      setSanitizedDocText(simulatedText);
+    try {
+      // Upload file to API
+      const uploadResult = await apiService.uploadContract(file);
+      setContractId(uploadResult.contract_id);
+      
+      // Poll for processing status
+      const pollStatus = async () => {
+        try {
+          const status = await apiService.getContractStatus(uploadResult.contract_id);
+          setProcessingStatus(status);
+          
+          if (status.status === 'completed') {
+            const contractData = await apiService.getContract(uploadResult.contract_id);
+            setSanitizedDocText(contractData.contract?.text || 'Document processed successfully');
+            setMessages((prev) => [
+              ...prev,
+              {
+                sender: "ai",
+                text: `Great! Your document "${file.name}" has been processed. You can now ask questions, run a risk analysis, or generate a checklist.`,
+                timestamp: new Date().toISOString(),
+              },
+            ]);
+            setAppState(APP_STATE.ANALYSIS);
+          } else if (status.status === 'failed') {
+            throw new Error('Processing failed');
+          } else {
+            setTimeout(pollStatus, 2000);
+          }
+        } catch (error) {
+          console.error('Status check failed:', error);
+          setTimeout(pollStatus, 2000);
+        }
+      };
+      
+      pollStatus();
+    } catch (error) {
+      console.error('Upload failed:', error);
       setMessages((prev) => [
         ...prev,
         {
           sender: "ai",
-          text: `Great! Your document "${file.name}" has been processed. You can now ask questions, run a risk analysis, or generate a checklist.`,
+          text: `Sorry, there was an error processing your document. Please try again.`,
           timestamp: new Date().toISOString(),
         },
       ]);
-      setAppState(APP_STATE.ANALYSIS);
-    }, 3000);
+      setAppState(APP_STATE.GENERAL_CHAT);
+    }
   }, []);
 
   const handleRiskAnalysis = useCallback(async () => {
     setActiveTab('risks');
     if (riskAnalysisResults) return;
+    if (!contractId) {
+      console.error('No contract ID available for risk analysis');
+      return;
+    }
+    
     setIsAnalyzingRisks(true);
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    const mockResults = [
-        { title: 'Ambiguous Termination Clause', severity: 'high', explanation: 'The conditions for termination are not clearly defined, which could lead to disputes.', quote: '...termination can occur following a material breach...' },
-        { title: 'Unilateral Liability Limit', severity: 'high', explanation: 'This clause significantly limits the liability of one party, which may be unfair.', quote: '...total liability of the Service Provider shall not exceed the total fees paid...' },
-        { title: 'Automatic Renewal', severity: 'medium', explanation: 'The contract will auto-renew unless you provide notice 90 days in advance.', quote: '...this Agreement shall automatically renew for successive one-year terms...' },
-        { title: 'Vague Confidentiality Terms', severity: 'low', explanation: 'The definition of "Confidential Information" is broad and could be interpreted widely.', quote: '...all non-public information, whether oral or written...' },
-    ];
-    setRiskAnalysisResults(mockResults);
+    try {
+      const response = await apiService.getRiskAnalysis(contractId);
+      const risks = response.risks || [];
+      
+      // Transform backend risk format to frontend format
+      const transformedRisks = risks.map(risk => ({
+        title: risk.description || `${risk.risk_type} Risk`,
+        severity: risk.severity || 'medium',
+        explanation: risk.description || 'Risk detected in contract',
+        quote: risk.clause_text || 'No specific clause text available'
+      }));
+      
+      setRiskAnalysisResults(transformedRisks);
+    } catch (error) {
+      console.error('Risk analysis failed:', error);
+      // Fallback to show error message
+      setRiskAnalysisResults([{
+        title: 'Analysis Error',
+        severity: 'low',
+        explanation: 'Unable to complete risk analysis. Please try again.',
+        quote: 'Error occurred during analysis'
+      }]);
+    }
     setIsAnalyzingRisks(false);
-  }, [sanitizedDocText, riskAnalysisResults]);
+  }, [contractId, riskAnalysisResults]);
 
   // --- New function to handle checklist generation ---
   const handleGenerateChecklist = useCallback(async () => {
@@ -112,6 +167,7 @@ export default function ChatPage({ initialMode }) {
               setMessages={setMessages}
               documentLoaded={false}
               onFileUpload={handleFileUpload}
+              contractId={contractId}
             />
           </div>
         );
@@ -176,6 +232,7 @@ export default function ChatPage({ initialMode }) {
                 documentLoaded={true}
                 sanitizedDocText={sanitizedDocText}
                 onFileUpload={handleFileUpload}
+                contractId={contractId}
               />
             </div>
           </div>

@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
+import apiService from '../services/api';
 
 // 1. UploadComponent import is no longer needed.
 
@@ -10,7 +11,8 @@ const ChatInterface = ({
     documentLoaded = false, 
     onFileUpload,
     isProcessing = false,
-    maxMessageLength = 1000
+    maxMessageLength = 1000,
+    contractId = null
 }) => {
     const [userInput, setUserInput] = useState('');
     const [isAiResponding, setIsAiResponding] = useState(false);
@@ -88,17 +90,30 @@ const ChatInterface = ({
         setUserInput('');
         setIsAiResponding(true);
 
-        // --- SIMULATE API CALL ---
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        let aiResponse = documentLoaded
-            ? `Regarding your document, here is a simulated answer to: "${currentQuestion}".`
-            : `As a general legal AI, here is a simulated answer to: "${currentQuestion}".`;
-        
-        setMessages([...newMessages, { 
-            sender: 'ai', 
-            text: aiResponse,
-            timestamp: new Date().toISOString()
-        }]);
+        try {
+            let aiResponse;
+            if (documentLoaded && contractId) {
+                // Ask question about the specific document
+                const response = await apiService.askQuestion(contractId, currentQuestion);
+                aiResponse = response.answer || 'I apologize, but I could not generate an answer to your question.';
+            } else {
+                // General legal question - you can implement a general chat endpoint
+                aiResponse = `As a general legal AI, I can help with legal questions. However, for specific document analysis, please upload a document first.`;
+            }
+            
+            setMessages([...newMessages, { 
+                sender: 'ai', 
+                text: aiResponse,
+                timestamp: new Date().toISOString()
+            }]);
+        } catch (error) {
+            console.error('Failed to get AI response:', error);
+            setMessages([...newMessages, { 
+                sender: 'ai', 
+                text: 'I apologize, but I encountered an error while processing your question. Please try again.',
+                timestamp: new Date().toISOString()
+            }]);
+        }
         setIsAiResponding(false);
     };
 
@@ -201,7 +216,8 @@ ChatInterface.propTypes = {
     documentLoaded: PropTypes.bool,
     onFileUpload: PropTypes.func,
     isProcessing: PropTypes.bool,
-    maxMessageLength: PropTypes.number
+    maxMessageLength: PropTypes.number,
+    contractId: PropTypes.string
 };
 
 export default ChatInterface;
